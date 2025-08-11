@@ -31,6 +31,7 @@ public class SyncPrimitive implements Watcher {
 
     public static class Barrier extends SyncPrimitive{
         String name;
+        String nodePath;
         int size;
 
         Barrier(String root, int size) {
@@ -42,7 +43,7 @@ public class SyncPrimitive implements Watcher {
             try {
                 Stat s = zk.exists(root, false);
                 if (s == null) {
-                    zk.create(root, "Teste".getBytes(StandardCharsets.UTF_8), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+                    nodePath = zk.create(root, "Teste".getBytes(StandardCharsets.UTF_8), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
                 }
             } catch (KeeperException e) {
                 System.out.println("Keeper exception when instantiating queue: " + e.toString());
