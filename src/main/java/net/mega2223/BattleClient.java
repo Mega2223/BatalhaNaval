@@ -12,7 +12,8 @@ public class BattleClient {
     static final ZooKeeper zk = Main.zk;
 
     String gameRoot = null;
-    BattleshipGame game;
+    BattleshipField game;
+    int id, leaderID = -1;
 
     public BattleClient() throws InterruptedException, KeeperException {
         if(zk.exists("/games",false) == null){
@@ -52,14 +53,15 @@ public class BattleClient {
         Barrier begin = new Barrier(gameRoot+"/begin_barrier",2);
         begin.enter();
 
-        game = new BattleshipGame();
+        game = new BattleshipField();
 
-        int id = Integer.parseInt(Main.PROCESS_ID);
+        id = Integer.parseInt(Main.PROCESS_ID);
 
         new ElectionListener(gameRoot+"/elections",id) {
             @Override
-            public void onLeaderSelected(String leader) {
-
+            public void onLeaderSelected(int leader) {
+                System.out.println("Resultado de eleição da partida " + gameRoot + " -> " + leader);
+                leaderID = leader;
             }
         };
 
@@ -73,5 +75,10 @@ public class BattleClient {
             }
             i++;
         }
+    }
+
+    public void distributeResources(){
+        String resourcesLoc = gameRoot + "/resources";
+
     }
 }

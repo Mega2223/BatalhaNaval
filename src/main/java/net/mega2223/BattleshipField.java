@@ -1,14 +1,14 @@
 package net.mega2223;
 
-public class BattleshipGame {
+public class BattleshipField {
     byte[][] map = new byte[10][10];
 
-    public static final byte WATER = 0;
-    public static final byte BOAT = 1;
-    public static final byte RUINS = 2;
-    public static final byte NOT_RUINS = 3;
+    public static final byte WATER = 0; // Agua
+    public static final byte BOAT = 1; // Barco
+    public static final byte RUINS = 2; // Barco bombardeado
+    public static final byte NOT_RUINS = 3; // Lugar bombardeado que tinha agua (não sou muito criativo)
 
-    public BattleshipGame(){
+    public BattleshipField(){
 
     }
 
@@ -66,5 +66,14 @@ public class BattleshipGame {
         return true;
     }
 
-
+    public boolean isAlive(){
+        for (int y = 0; y < map.length; y++) {
+            for (int x = 0; x < map[y].length; x++) {
+                if(map[y][x] == BOAT){
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
 }
