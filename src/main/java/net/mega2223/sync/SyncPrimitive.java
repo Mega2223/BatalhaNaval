@@ -7,7 +7,7 @@ import org.apache.zookeeper.ZooKeeper;
 
 public class SyncPrimitive implements Watcher {
     static final ZooKeeper zk = Main.zk;
-    static Integer mutex;
+    protected static Integer mutex;
 
     String root;
 
