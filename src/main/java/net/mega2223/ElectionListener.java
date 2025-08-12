@@ -14,12 +14,14 @@ public abstract class ElectionListener extends SyncPrimitive {
     public static final int ELECTION_UNRESPONSIVE_LIMIT_MILLIS = 10000;
 
     int id;
+    public Integer notifier = null;
     String root;
     String leader; // Nó efêmero de posse do líder / coordenador,
     // se o mesmo cai quem tá assistindo os descendentes de root vai perceber a perda do lider
     String election; // Criado para puxar uma eleição, todos os clientes estão ouvindo o nó root
 
     public ElectionListener(String root, int id) throws InterruptedException, KeeperException {
+
         this.root = root;
         this.id = id;
         leader = root + "/leader";
@@ -28,6 +30,8 @@ public abstract class ElectionListener extends SyncPrimitive {
         Thread main = Thread.currentThread();
         Thread t = new Thread(() -> { // não deve bloquear a lógica principal de onde for chamada
             try {
+                Integer notifier = -1;
+                this.notifier = notifier;
                 begin();
             } catch (InterruptedException | KeeperException exception) {
                 System.out.println("Error at election thread:");
@@ -39,11 +43,13 @@ public abstract class ElectionListener extends SyncPrimitive {
         });
 
         t.start();
+        while(notifier == null){
+            Thread.sleep(1);
+        }
     }
 
     public void begin() throws InterruptedException, KeeperException {
         System.out.println("Eleição declarada");
-
         synchronized (mutex){
             try{
                 if(zk.exists(root,null) == null){
@@ -69,9 +75,11 @@ public abstract class ElectionListener extends SyncPrimitive {
     }
 
     public void startElection() throws InterruptedException, KeeperException {
-        if(zk.exists(election,null) == null){
-            zk.create(election,new byte[0], ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
-        }
+        try{
+            if(zk.exists(election,null) == null){
+                zk.create(election,new byte[0], ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+            }
+        } catch (KeeperException.NodeExistsException ignored){}
         participateInElection();
     }
 
@@ -111,15 +119,19 @@ public abstract class ElectionListener extends SyncPrimitive {
         }
         // Se ele chegou aqui, ninguém com id mais alto que ele reportou ao node de eleição
         // Logo, ele é o valentão
-        System.out.println("Líder da eleição " + election + " é " + id);
-        zk.create(leader,intToByteSequence(id),ZooDefs.Ids.OPEN_ACL_UNSAFE,CreateMode.EPHEMERAL);
-        for(String child : zk.getChildren(election,null)){
-            zk.delete(election+"/"+child,-1);
+        try{
+//            System.out.println("Líder da eleição " + election + " é " + id);
+            zk.create(leader,intToByteSequence(id),ZooDefs.Ids.OPEN_ACL_UNSAFE,CreateMode.EPHEMERAL);
+            for(String child : zk.getChildren(election,null)){
+                zk.delete(election+"/"+child,-1);
+            }
+            zk.delete(election,-1);
+            onLeaderSelected(
+                    byteSequenceToInt(zk.getData(leader,false,null))
+            );
+        } catch (KeeperException ignored){
+            System.out.println("ERROR"+ignored);
         }
-        zk.delete(election,-1);
-        onLeaderSelected(
-                byteSequenceToInt(zk.getData(leader,false,null))
-        );
     }
 
     public static byte[] intToByteSequence(int value){

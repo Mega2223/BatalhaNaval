@@ -25,7 +25,8 @@ public class Barrier extends SyncPrimitive {
         try {
             Stat s = zk.exists(root, false);
             if (s == null) {
-                nodePath = zk.create(root, "Barrier".getBytes(StandardCharsets.UTF_8), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+//                nodePath = zk.create(root, "Barrier".getBytes(StandardCharsets.UTF_8), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+                nodePath = zk.create(root, Main.PROCESS_ID.getBytes(StandardCharsets.UTF_8), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
             }
         } catch (KeeperException e) {
             System.out.println("Keeper exception when instantiating queue: " + e);

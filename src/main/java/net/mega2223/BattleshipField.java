@@ -76,4 +76,10 @@ public class BattleshipField {
         }
         return false;
     }
+
+    public boolean bomb(int x, int y){
+        boolean isBoat = map[y][x] == BOAT;
+        map[y][x] = isBoat ? RUINS : NOT_RUINS;
+        return isBoat;
+    }
 }
