@@ -1,12 +1,16 @@
 package net.mega2223.game;
 
 import net.mega2223.zk.ZooKeeperConnector;
-import net.mega2223.zk.SyncPrimitives;
+import net.mega2223.zk.Queue;
+import net.mega2223.zk.Barrier;
+import net.mega2223.zk.Leader;
+import net.mega2223.zk.Lock;
 
 import org.apache.zookeeper.*;
 import org.apache.zookeeper.data.Stat;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Scanner;
 import java.util.UUID;
@@ -14,10 +18,10 @@ import java.util.UUID;
 public class DistributedBattleshipClient implements Watcher {
     private final String hostPort;
     private ZooKeeperConnector connector;
-    private SyncPrimitives.Queue queue;
-    private SyncPrimitives.Barrier barrier;
-    private SyncPrimitives.Leader leader;
-    private SyncPrimitives.Lock lock;
+    private Queue queue;
+    private Barrier barrier;
+    private Leader leader;
+    private Lock lock;
 
     private String playerId;
     private String opponentId;
@@ -30,7 +34,7 @@ public class DistributedBattleshipClient implements Watcher {
     public DistributedBattleshipClient(String hostPort) throws IOException {
         this.hostPort = hostPort;
         this.connector = new ZooKeeperConnector();
-        this.playerId = "p-" + UUID.randomUUID().toString().substring(0,6);
+        this.playerId = "p-" + UUID.randomUUID().toString().substring(0, 6);
         this.board = new Board();
     }
 
@@ -61,52 +65,68 @@ public class DistributedBattleshipClient implements Watcher {
         zk.create("/battleship/players/" + playerId, new byte[0], ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL);
         System.out.println("Nó Filho Criado");
 
-        queue = new SyncPrimitives.Queue(hostPort, "/battleship/moves");
-        barrier = new SyncPrimitives.Barrier(hostPort, "/battleship/ready", 2);
-        leader = new SyncPrimitives.Leader(hostPort, "/battleship/election", "/battleship/leader", playerId);
-        lock = new SyncPrimitives.Lock(hostPort, "/battleship/lock");
+        queue = new Queue(hostPort, "/battleship/moves");
+        barrier = new Barrier(hostPort, "/battleship/ready", 2);
+        leader = new Leader(hostPort, "/battleship/election", "/battleship/leader", playerId);
+        lock = new Lock(hostPort, "/battleship/lock");
         System.out.println("Primitivas Iniciadas");
 
         System.out.println("Começando o Jogo!!!");
         promptPlaceShips();
 
         Stat s = zk.exists("/battleship/boards/" + playerId, false);
-        if (s == null) zk.create("/battleship/boards/" + playerId, board.serialize().getBytes("UTF-8"), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
-        else zk.setData("/battleship/boards/" + playerId, board.serialize().getBytes("UTF-8"), -1);
+        byte[] myBoard = board.serialize().getBytes(StandardCharsets.UTF_8);
+        if (s == null) {
+            zk.create("/battleship/boards/" + playerId, myBoard, ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+        } else {
+            zk.setData("/battleship/boards/" + playerId, myBoard, -1);
+        }
 
         System.out.println("Esperando outro jogador (barrier)...");
         barrier.enter();
         System.out.println("Ambos prontos! Prosseguindo para eleição de leader...");
+
+        // garanta opponentId para ambos (inclusive o líder)
+        findOpponent();
 
         boolean iamLeader = leader.elect();
         if (iamLeader) {
             System.out.println("Fui eleito leader (referee). Vou consumir fila de moves.");
             runReferee();
         } else {
-            findOpponent();
             System.out.println("Não sou leader. Aguardando turno. Meu id = " + playerId + ", opponent = " + opponentId);
             runPlayerLoop();
         }
     }
 
     private void runReferee() throws Exception {
+        // líder começa sempre
         Stat s = zk.exists("/battleship/turn", true);
         if (s == null) {
-            List<String> players = zk.getChildren("/battleship/players", false);
-            String firstPlayer = players.get(0);
-            System.out.println("Definindo o primeiro jogador como: " + firstPlayer);
-            zk.create("/battleship/turn", firstPlayer.getBytes("UTF-8"), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+            String firstPlayer = playerId; // líder inicia
+            System.out.println("Definindo o primeiro jogador (líder): " + firstPlayer);
+            zk.create("/battleship/turn", firstPlayer.getBytes(StandardCharsets.UTF_8),
+                    ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
         }
 
         System.out.println("Referee inicializado. Aguardando turno ou mensagens na fila...");
         Scanner sc = new Scanner(System.in);
 
         while (true) {
-            // Verifica e exibe qualquer resultado novo antes de checar o turno
+            // (1) imprime resultados novos (para todos) e arma watch
             checkAndPrintLastMove();
 
+            // (2) se já há vencedor, encerra líder também
+            Stat sw = zk.exists("/battleship/winner", false);
+            if (sw != null) {
+                byte[] w = zk.getData("/battleship/winner", false, sw);
+                System.out.println("Jogo finalizado. Vencedor: " + new String(w, StandardCharsets.UTF_8));
+                connector.close();
+                return;
+            }
+
             byte[] turnData = zk.getData("/battleship/turn", true, s);
-            String currentTurn = new String(turnData, "UTF-8");
+            String currentTurn = new String(turnData, StandardCharsets.UTF_8);
 
             if (currentTurn.equals(playerId)) {
                 System.out.println("É o seu turno (líder)! Digite a coordenada (ex A5): ");
@@ -115,32 +135,41 @@ public class DistributedBattleshipClient implements Watcher {
                 queue.produce(playerId + "|" + coord);
                 System.out.println("Move enviado, aguardando confirmação...");
 
-                // O líder deve esperar por uma jogada na fila (pode ser a dele ou do oponente)
+                // Espera uma jogada da fila e processa
                 byte[] data = queue.consume();
                 String lastMove = processMove(data);
 
-                // Exibe o resultado processado (garante que o leader também veja o feedback)
-                if (lastMove != null && !lastMove.equals(lastSeenMove)) {
+                if (lastMove != null) {
                     System.out.println("Resultado: " + lastMove);
                     lastSeenMove = lastMove;
+                    printBoardsSnapshot(); // líder imprime imediatamente
+
+                    if (lastMove.endsWith("|WIN")) {
+                        System.out.println("Jogo finalizado. Encerrando líder.");
+                        connector.close();
+                        return;
+                    }
                 }
 
-                // Depois de processar a jogada (que atualiza o /battleship/turn), aguardar
-                // explicitamente até que o turno deixe de ser o líder antes de permitir nova jogada.
+                // Aguarda o turno mudar
                 waitForTurnChange(playerId);
             } else {
                 System.out.println("Aguardando turno de " + currentTurn + "...");
 
-                // O líder espera por uma jogada do oponente
                 byte[] data = queue.consume();
                 String lastMove = processMove(data);
 
-                if (lastMove != null && !lastMove.equals(lastSeenMove)) {
+                if (lastMove != null) {
                     System.out.println("Resultado: " + lastMove);
                     lastSeenMove = lastMove;
+                    printBoardsSnapshot(); // líder imprime imediatamente
+
+                    if (lastMove.endsWith("|WIN")) {
+                        System.out.println("Jogo finalizado. Encerrando líder.");
+                        connector.close();
+                        return;
+                    }
                 }
-                // após processar a jogada do oponente, caso o turno volte para o líder,
-                // a próxima iteração vai detectá-lo; não é necessário mais espera aqui.
             }
         }
     }
@@ -151,7 +180,7 @@ public class DistributedBattleshipClient implements Watcher {
      * Retorna a string lastMove escrita (ou null se nada foi processado).
      */
     private String processMove(byte[] data) throws Exception {
-        String msg = new String(data, "UTF-8");
+        String msg = new String(data, StandardCharsets.UTF_8);
         String[] parts = msg.split("\\|");
         String from = parts[0];
         String coord = parts[1];
@@ -165,27 +194,30 @@ public class DistributedBattleshipClient implements Watcher {
 
             Stat st = zk.exists("/battleship/boards/" + opponent, false);
             byte[] boardData = zk.getData("/battleship/boards/" + opponent, false, st);
-            Board oppBoard = Board.deserialize(new String(boardData, "UTF-8"));
+            Board oppBoard = Board.deserialize(new String(boardData, StandardCharsets.UTF_8));
 
             Board.ShotResult result = oppBoard.shoot(coord);
-            zk.setData("/battleship/boards/" + opponent, oppBoard.serialize().getBytes("UTF-8"), -1);
+            zk.setData("/battleship/boards/" + opponent, oppBoard.serialize().getBytes(StandardCharsets.UTF_8), -1);
 
             String lastMove = from + "|" + coord + "|" + result.outcome;
             Stat stLast = zk.exists("/battleship/lastmove", false);
-            if (stLast == null) zk.create("/battleship/lastmove", lastMove.getBytes("UTF-8"), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
-            else zk.setData("/battleship/lastmove", lastMove.getBytes("UTF-8"), -1);
-
-            if (result.isWinner) {
-                if (zk.exists("/battleship/winner", false) == null)
-                    zk.create("/battleship/winner", from.getBytes("UTF-8"), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
-                System.out.println("Jogador " + from + " venceu! Encerrando referee.");
-                return lastMove;
+            byte[] lmBytes = lastMove.getBytes(StandardCharsets.UTF_8);
+            if (stLast == null) {
+                zk.create("/battleship/lastmove", lmBytes, ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+            } else {
+                zk.setData("/battleship/lastmove", lmBytes, -1);
             }
 
-            // Lógica para atualizar o turno para o próximo jogador
-            String nextTurn = opponent;
-            zk.setData("/battleship/turn", nextTurn.getBytes(), -1);
-
+            if (result.isWinner) {
+                if (zk.exists("/battleship/winner", false) == null) {
+                    zk.create("/battleship/winner", from.getBytes(StandardCharsets.UTF_8), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+                }
+                System.out.println("Jogador " + from + " venceu! Encerrando referee.");
+                // não dá return aqui; quem consome decide encerrar ao ver |WIN
+            } else {
+                // Próximo turno = oponente
+                zk.setData("/battleship/turn", opponent.getBytes(StandardCharsets.UTF_8), -1);
+            }
             return lastMove;
         } finally {
             lock.unlock();
@@ -193,7 +225,7 @@ public class DistributedBattleshipClient implements Watcher {
     }
 
     private void runPlayerLoop() throws Exception {
-        findOpponent();
+        if (opponentId == null) findOpponent();
         if (opponentId == null) {
             System.out.println("Não foi possível encontrar o oponente. Encerrando.");
             return;
@@ -215,8 +247,19 @@ public class DistributedBattleshipClient implements Watcher {
             // Sempre checar e imprimir qualquer resultado novo que ainda não exibimos
             checkAndPrintLastMove();
 
+            // também checa vencedor para encerrar imediatamente
+            Stat sw = zk.exists("/battleship/winner", false);
+            if (sw != null) {
+                byte[] w = zk.getData("/battleship/winner", false, sw);
+                String winner = new String(w, StandardCharsets.UTF_8);
+                if (winner.equals(playerId)) System.out.println("Você venceu!");
+                else System.out.println("Você perdeu. Jogador vencedor: " + winner);
+                connector.close();
+                break;
+            }
+
             byte[] turnData = zk.getData("/battleship/turn", true, st);
-            String currentTurn = new String(turnData, "UTF-8");
+            String currentTurn = new String(turnData, StandardCharsets.UTF_8);
 
             if (!currentTurn.equals(playerId)) {
                 System.out.println("Aguardando turno atual: " + currentTurn);
@@ -236,27 +279,16 @@ public class DistributedBattleshipClient implements Watcher {
             queue.produce(playerId + "|" + coord);
             System.out.println("Move enviado, aguardando resultado...");
 
-            // Espera até que /battleship/lastmove mude (ou seja criado) para algo diferente do prevSeen
-            Stat s = zk.exists("/battleship/lastmove", true);
+            // Espera até que /battleship/lastmove mude para algo diferente do prevSeen
+            Stat s2 = zk.exists("/battleship/lastmove", true);
             while (true) {
-                // Se houver um lastmove e for novo, checkAndPrintLastMove vai imprimir e atualizar lastSeenMove
                 checkAndPrintLastMove();
                 if (lastSeenMove != null && !lastSeenMove.equals(prevSeen)) break;
 
                 synchronized (this) {
                     wait();
                 }
-                s = zk.exists("/battleship/lastmove", true);
-            }
-
-            // Verifica se alguém venceu
-            Stat sw = zk.exists("/battleship/winner", false);
-            if (sw != null) {
-                byte[] w = zk.getData("/battleship/winner", false, sw);
-                String winner = new String(w, "UTF-8");
-                if (winner.equals(playerId)) System.out.println("Você venceu!");
-                else System.out.println("Você perdeu. Jogador vencedor: " + winner);
-                break;
+                s2 = zk.exists("/battleship/lastmove", true);
             }
 
             // Aguarda explicitamente até que o /battleship/turn deixe de ser o meu
@@ -272,10 +304,13 @@ public class DistributedBattleshipClient implements Watcher {
         Stat s = zk.exists("/battleship/lastmove", true);
         if (s != null) {
             byte[] data = zk.getData("/battleship/lastmove", true, s);
-            String lm = new String(data, java.nio.charset.StandardCharsets.UTF_8);
+            String lm = new String(data, StandardCharsets.UTF_8);
             if (!lm.equals(lastSeenMove)) {
                 System.out.println("Resultado: " + lm);
                 lastSeenMove = lm;
+
+                // imprime tabuleiros após cada jogada aplicada pelo árbitro
+                printBoardsSnapshot();
             }
         }
     }
@@ -287,28 +322,20 @@ public class DistributedBattleshipClient implements Watcher {
     private void waitForTurnChange(String previousTurn) throws KeeperException, InterruptedException {
         Stat st = zk.exists("/battleship/turn", true);
         while (true) {
-            // Se o nó existir, leia e compare
             if (st != null) {
                 byte[] data = zk.getData("/battleship/turn", true, st);
-                String cur = new String(data, java.nio.charset.StandardCharsets.UTF_8);
+                String cur = new String(data, StandardCharsets.UTF_8);
                 if (!cur.equals(previousTurn)) return;
             } else {
-                // se não existir, espere até que seja criado
                 st = zk.exists("/battleship/turn", true);
                 if (st == null) {
-                    synchronized (this) {
-                        wait();
-                    }
+                    synchronized (this) { wait(); }
                     continue;
                 } else {
                     continue;
                 }
             }
-            // aguarda notificação (process)
-            synchronized (this) {
-                wait();
-            }
-            // re-loop: o watch foi disparado, voltamos a checar o dado
+            synchronized (this) { wait(); }
             st = zk.exists("/battleship/turn", true);
         }
     }
@@ -320,22 +347,62 @@ public class DistributedBattleshipClient implements Watcher {
 
     private void promptPlaceShips() {
         Scanner sc = new Scanner(System.in);
-        System.out.println("Posicione 3 navios (exemplo posições: A1 A1 (single), A3 A5 (len3))");
-        int ships = 3;
-        for (int i=0;i<ships;i++){
-            boolean ok=false;
+        System.out.println("Posicione sua frota completa. Ex: A1 A5 (horizontal 5), B2 B2 (single).");
+        System.out.println(board.prettyPrint());
+
+        // Se você deixou só 3 tipos no ShipType, este loop já usa exatamente esses 3
+        for (ShipType t : ShipType.values()) {
+            boolean ok = false;
             while (!ok) {
-                System.out.printf("Navio %d - digite start e end (ex: A1 A1): ", i+1);
-                String line = sc.nextLine().trim();
+                System.out.printf("%s (%d células) - digite start e end (ex: A1 A%d): ",
+                        t.name, t.length, t.length);
+                String line = sc.nextLine().trim().toUpperCase();
                 String[] parts = line.split("\\s+");
-                if (parts.length < 2) { System.out.println("Formato inválido"); continue; }
-                ok = board.placeShip(parts[0], parts[1], "ship"+(i+1));
-                if (!ok) System.out.println("Não foi possível posicionar, tente outra posição.");
-                else System.out.println("Navio posicionado.");
+                if (parts.length < 2) {
+                    System.out.println("Formato inválido");
+                    continue;
+                }
+                ok = board.placeShip(parts[0], parts[1], new Ship(t));
+                if (!ok) {
+                    System.out.println("Posição inválida (tamanho/linha/colisão/vizinhança). Tente outra.");
+                }
+                System.out.println(board.prettyPrint());
             }
         }
     }
 
+    // ---------- helpers de impressão ----------
+    private Board fetchBoardFor(String pid) throws KeeperException, InterruptedException {
+        Stat st = zk.exists("/battleship/boards/" + pid, false);
+        if (st == null) return null;
+        byte[] data = zk.getData("/battleship/boards/" + pid, false, st);
+        return Board.deserialize(new String(data, StandardCharsets.UTF_8));
+    }
+
+    private void printBoardsSnapshot() {
+        try {
+            if (opponentId == null) {
+                findOpponent(); // garante opponentId
+            }
+            Board my = fetchBoardFor(playerId);
+            Board opp = (opponentId != null) ? fetchBoardFor(opponentId) : null;
+
+            System.out.println("\n=== Estado após a jogada ===");
+            if (opp != null) {
+                System.out.println("Tabuleiro do oponente (fog of war):");
+                System.out.println(opp.prettyPrintFogOfWar());
+            }
+            if (my != null) {
+                System.out.println("Seu tabuleiro:");
+                System.out.println(my.prettyPrint());
+            }
+            System.out.println("============================\n");
+        } catch (Exception e) {
+            System.out.println("(Não foi possível imprimir os tabuleiros agora: " + e.getMessage() + ")");
+        }
+    }
+
+    // ---------- descoberta de oponente ----------
     private void findOpponent() throws KeeperException, InterruptedException {
         for (String child : zk.getChildren("/battleship/players", false)) {
             if (!child.equals(playerId)) {
@@ -353,7 +420,7 @@ public class DistributedBattleshipClient implements Watcher {
         return null;
     }
 
-    // Limpa os nós persistentes e a fila de movimentos para garantir um novo estado de jogo
+    // Limpa nós persistentes e a fila de movimentos para garantir um novo estado de jogo
     private void cleanupZNodes() throws KeeperException, InterruptedException {
         String[] pathsToClean = {
                 "/battleship/turn",
@@ -368,9 +435,7 @@ public class DistributedBattleshipClient implements Watcher {
                 try {
                     zk.delete(path, -1);
                     System.out.println("  > Nó persistente removido: " + path);
-                } catch (KeeperException.NoNodeException ignored) {
-                    // Ignore se o nó já não existir
-                }
+                } catch (KeeperException.NoNodeException ignored) { }
             }
         }
 
@@ -378,21 +443,18 @@ public class DistributedBattleshipClient implements Watcher {
         if (zk.exists("/battleship/moves", false) != null) {
             System.out.println("  > Limpando fila de movimentos em /battleship/moves...");
             try {
-                // Exclui todos os nós filhos da fila para garantir que está vazia
                 List<String> children = zk.getChildren("/battleship/moves", false);
                 for (String child : children) {
                     zk.delete("/battleship/moves/" + child, -1);
                     System.out.println("    - Movimento obsoleto removido: " + child);
                 }
-            } catch (KeeperException.NoNodeException ignored) {
-                // Se a fila não tiver nós filhos, a operação será ignorada
-            }
+            } catch (KeeperException.NoNodeException ignored) { }
         }
     }
 
     public static void main(String[] args) throws Exception {
         if (args.length < 1) {
-            System.out.println("Usage: java game.DistributedBattleshipClient <zookeeper-host:2181>");
+            System.out.println("Usage: java net.mega2223.game.DistributedBattleshipClient <zookeeper-host:2181>");
             return;
         }
         DistributedBattleshipClient client = new DistributedBattleshipClient(args[0]);
