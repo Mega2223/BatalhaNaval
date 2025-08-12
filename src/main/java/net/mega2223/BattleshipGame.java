@@ -1,6 +1,6 @@
 package net.mega2223;
 
-public class BattleShip {
+public class BattleshipGame {
     byte[][] map = new byte[10][10];
 
     public static final byte WATER = 0;
@@ -8,7 +8,7 @@ public class BattleShip {
     public static final byte RUINS = 2;
     public static final byte NOT_RUINS = 3;
 
-    public BattleShip(){
+    public BattleshipGame(){
 
     }
 

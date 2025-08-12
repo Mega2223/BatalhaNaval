@@ -21,8 +21,10 @@ public class Main {
             System.out.println("creating id repo");
             zk.create("/id",new byte[0], ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
         }
-        new BattleShip().print();
-        PROCESS_ID = zk.create("/id",new byte[0],ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL_SEQUENTIAL);
+
+        PROCESS_ID = zk.create("/id/",new byte[0],ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL_SEQUENTIAL);
+
+        PROCESS_ID = PROCESS_ID.split("/")[2]; // horrivel eu sei
 
         System.out.println("PROCESS_ID = " + PROCESS_ID);
 

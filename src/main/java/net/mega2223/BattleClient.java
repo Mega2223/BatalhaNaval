@@ -1,5 +1,6 @@
 package net.mega2223;
 
+import net.mega2223.sync.Barrier;
 import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.ZooDefs;
@@ -11,6 +12,7 @@ public class BattleClient {
     static final ZooKeeper zk = Main.zk;
 
     String gameRoot = null;
+    BattleshipGame game;
 
     public BattleClient() throws InterruptedException, KeeperException {
         if(zk.exists("/games",false) == null){
@@ -41,12 +43,16 @@ public class BattleClient {
             //zk.create(game+"/barrier",data,ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL_SEQUENTIAL);
         }
 
-        SyncPrimitive.Barrier b = new SyncPrimitive.Barrier(gameRoot+"/barrier",2);
+        Barrier join = new Barrier(gameRoot+"/join_barrier",2);
+        join.enter();
 
-
-
-        b.enter();
+        System.out.println("Starting game " + gameRoot);
         zk.setData(gameRoot,new byte[]{1},-1);
+
+        Barrier begin = new Barrier(gameRoot+"/begin_barrier",2);
+        begin.enter();
+
+        game = new BattleshipGame();
 
         int i = 0;
         while (i < 100){
