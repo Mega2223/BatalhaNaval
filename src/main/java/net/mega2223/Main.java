@@ -17,8 +17,6 @@ public class Main {
             System.out.println("END EVENT\n");
         });
 
-        System.exit(0);
-
         if(zk.exists("/id",false) == null){
             System.out.println("creating id repo");
             zk.create("/id",new byte[0], ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);

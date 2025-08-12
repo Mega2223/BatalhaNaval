@@ -54,6 +54,15 @@ public class BattleClient {
 
         game = new BattleshipGame();
 
+        int id = Integer.parseInt(Main.PROCESS_ID);
+
+        new ElectionListener(gameRoot+"/elections",id) {
+            @Override
+            public void onLeaderSelected(String leader) {
+
+            }
+        };
+
         int i = 0;
         while (i < 100){
             try {
