@@ -61,8 +61,8 @@ public class BattleClient {
         Barrier begin = new Barrier(gameRoot+"/begin_barrier",2);
         begin.enter();
 
-        myField = new BattleshipField();
-        enemyField = new BattleshipField();
+        myField = new BattleshipField(false);
+        enemyField = new BattleshipField(true);
 
         id = Integer.parseInt(Main.PROCESS_ID);
 

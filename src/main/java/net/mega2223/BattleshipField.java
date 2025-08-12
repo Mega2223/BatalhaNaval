@@ -8,8 +8,10 @@ public class BattleshipField {
     public static final byte RUINS = 2; // Barco bombardeado
     public static final byte NOT_RUINS = 3; // Lugar bombardeado que tinha agua (não sou muito criativo)
 
-    public BattleshipField(){
+    boolean fogOfWar;
 
+    public BattleshipField(boolean fogOfWar){
+        this.fogOfWar = fogOfWar;
     }
 
     public void print(){
@@ -22,7 +24,7 @@ public class BattleshipField {
                         b.append(" -");
                         break;
                     case BOAT:
-                        b.append(" A");
+                        b.append(fogOfWar ? " -" : " B");
                         break;
                     case RUINS:
                         b.append(" X");

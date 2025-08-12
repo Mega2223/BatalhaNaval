@@ -20,12 +20,15 @@ public abstract class ElectionListener extends SyncPrimitive {
     // se o mesmo cai quem tá assistindo os descendentes de root vai perceber a perda do lider
     String election; // Criado para puxar uma eleição, todos os clientes estão ouvindo o nó root
 
+    int leaderID = -1;
+
     public ElectionListener(String root, int id) throws InterruptedException, KeeperException {
 
         this.root = root;
         this.id = id;
         leader = root + "/leader";
         election = root + "/election";
+
         
         Thread main = Thread.currentThread();
         Thread t = new Thread(() -> { // não deve bloquear a lógica principal de onde for chamada
@@ -67,6 +70,12 @@ public abstract class ElectionListener extends SyncPrimitive {
                     startElection();
                 } else if (noLeader) {
                     participateInElection();
+                } else {
+                    if(this.leaderID != byteSequenceToInt(zk.getData(leader,false,null))){
+                        //edge case caso de algum erro na eleição
+                        this.leaderID = byteSequenceToInt(zk.getData(leader,false,null));
+                        onLeaderSelected(leaderID);
+                    }
                 }
                 zk.getChildren(root, this);
                 mutex.wait();
@@ -130,7 +139,7 @@ public abstract class ElectionListener extends SyncPrimitive {
                     byteSequenceToInt(zk.getData(leader,false,null))
             );
         } catch (KeeperException ignored){
-            System.out.println("ERROR"+ignored);
+            System.out.println("ELECTION ERROR\n"+ignored);
         }
     }
 
