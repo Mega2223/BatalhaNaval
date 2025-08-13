@@ -12,6 +12,7 @@ import org.apache.zookeeper.data.Stat;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Random;
 import java.util.Scanner;
 import java.util.UUID;
 
@@ -24,6 +25,7 @@ public class DistributedBattleshipClient implements Watcher {
     private Lock lock;
 
     private String playerId;
+    private Integer playerIdVal;
     private String opponentId;
     private Board board;
     private ZooKeeper zk;
@@ -34,7 +36,8 @@ public class DistributedBattleshipClient implements Watcher {
     public DistributedBattleshipClient(String hostPort) throws IOException {
         this.hostPort = hostPort;
         this.connector = new ZooKeeperConnector();
-        this.playerId = "p-" + UUID.randomUUID().toString().substring(0, 6);
+        this.playerIdVal = new Random().nextInt(1000);
+        this.playerId = String.format("p-%4d",playerIdVal);
         this.board = new Board();
     }
 
