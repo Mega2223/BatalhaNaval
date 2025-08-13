@@ -454,8 +454,10 @@ public class DistributedBattleshipClient implements Watcher {
 
     public static void main(String[] args) throws Exception {
         if (args.length < 1) {
-            System.out.println("Usage: java net.mega2223.game.DistributedBattleshipClient <zookeeper-host:2181>");
-            return;
+            System.out.println("No argument given as zookeeper address, using default");
+            args = new String[]{
+                    "localhost:2181"
+            };
         }
         DistributedBattleshipClient client = new DistributedBattleshipClient(args[0]);
         client.start();
