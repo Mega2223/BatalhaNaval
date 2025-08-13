@@ -157,7 +157,11 @@ public class Board {
     private static final class Point {
         final int row, col;
         Point(int r, int c){ this.row = r; this.col = c; }
-        @Override public boolean equals(Object o){ if(!(o instanceof Point p)) return false; return p.row==row && p.col==col; }
+        @Override public boolean equals(Object o){
+            if(!(o instanceof Point)) return false;
+            Point p2 = (Point)o;
+            return p2.row==row && p2.col==col;
+        }
         @Override public int hashCode(){ return Objects.hash(row, col); }
     }
 }

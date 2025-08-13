@@ -9,7 +9,7 @@
     <version>0.1.0</version>
 
     <properties>
-        <maven.compiler.release>21</maven.compiler.release>
+        <maven.compiler.release>8</maven.compiler.release>
         <exec.plugin.version>3.1.0</exec.plugin.version>
         <curator.version>5.6.0</curator.version>
         <zookeeper.version>3.9.2</zookeeper.version>
@@ -75,9 +75,9 @@
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.11.0</version>
                 <configuration>
-                    <release>16</release>
-                    <source>16</source>
-                    <target>16</target>
+                    <release>8</release>
+                    <source>8</source>
+                    <target>8</target>
                 </configuration>
             </plugin>
         </plugins>
